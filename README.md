@@ -53,12 +53,14 @@ Bu yöntem, ağdaki boş IP'leri bulur ve sizin için ayarlar.
 2.  **Network Auto-Setup** bölümüne gelin.
 3.  **Interface** listesinden ağ kartınızı seçin (Örn: `Wi-Fi`).
 4.  **Start IP** kısmına taramanın başlayacağı IP adresini yazın (Örn: `192.168.43.50`).
-5.  **Count** kısmına kaç adet sunucu istediğinizi yazın (Örn: `5`).
-6.  **Scan & Claim IPs** butonuna tıklayın.
+5.  **Port** kısmına sunucuların çalışacağı portu girin (Örn: `5020`).
+6.  **Count** kısmına kaç adet sunucu istediğinizi yazın (Örn: `5`).
+7.  **Scan & Claim IPs** butonuna tıklayın.
     *   Program belirtilen aralıktaki boş IP'leri bulacak.
     *   Bu IP'leri bilgisayarınıza "Sanal IP" olarak ekleyecek.
     *   Sunucuları otomatik olarak listeye ekleyecektir.
-7.  **Start All** butonuna basarak tüm sunucuları başlatın.
+    *   *İpucu: Bu işlemi farklı IP aralıkları veya portlar için tekrar tekrar yapabilirsiniz.*
+8.  **Start All** butonuna basarak tüm sunucuları başlatın.
 
 ### Yöntem 2: Manuel Ekleme
 Eğer IP adreslerini kendiniz belirlemek istiyorsanız:

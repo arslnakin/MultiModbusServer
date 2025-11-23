@@ -18,6 +18,8 @@ class AsyncWorker(QObject):
         asyncio.run_coroutine_threadsafe(coro, self.loop)
 
 class MainWindow(QMainWindow):
+    scan_finished = pyqtSignal(str)
+
     def __init__(self, manager, loop):
         super().__init__()
         self.manager = manager
@@ -25,6 +27,8 @@ class MainWindow(QMainWindow):
         self.net_manager = NetworkManager()
         self.setWindowTitle("Multi-IP Modbus Server Manager")
         self.resize(1000, 700)
+        
+        self.scan_finished.connect(self.on_scan_finished)
         
         self._setup_ui()
         self._setup_timer()
@@ -52,6 +56,11 @@ class MainWindow(QMainWindow):
         self.input_scan_ip = QLineEdit()
         self.input_scan_ip.setPlaceholderText("Start IP (e.g. 192.168.1.50)")
         
+        self.input_scan_port = QLineEdit()
+        self.input_scan_port.setPlaceholderText("Port")
+        self.input_scan_port.setText("5020")
+        self.input_scan_port.setFixedWidth(60)
+
         self.input_scan_count = QLineEdit()
         self.input_scan_count.setPlaceholderText("Count")
         self.input_scan_count.setText("5")
@@ -64,6 +73,8 @@ class MainWindow(QMainWindow):
         net_layout.addWidget(self.combo_iface)
         net_layout.addWidget(QLabel("Start IP:"))
         net_layout.addWidget(self.input_scan_ip)
+        net_layout.addWidget(QLabel("Port:"))
+        net_layout.addWidget(self.input_scan_port)
         net_layout.addWidget(QLabel("Count:"))
         net_layout.addWidget(self.input_scan_count)
         net_layout.addWidget(self.btn_scan)
@@ -138,6 +149,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "Count must be a number")
             return
             
+        try:
+            port = int(self.input_scan_port.text())
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Port must be a number")
+            return
+            
         if not start_ip:
             QMessageBox.warning(self, "Error", "Please enter Start IP")
             return
@@ -151,20 +168,16 @@ class MainWindow(QMainWindow):
         self.btn_scan.setEnabled(False)
         
         # Run async scan
-        asyncio.run_coroutine_threadsafe(self._async_scan_and_claim(iface_data, start_ip, count), self.loop)
+        asyncio.run_coroutine_threadsafe(self._async_scan_and_claim(iface_data, start_ip, count, port), self.loop)
 
-    async def _async_scan_and_claim(self, iface_data, start_ip, count):
+    async def _async_scan_and_claim(self, iface_data, start_ip, count, port):
+        msg = ""
         try:
             # 1. Scan for free IPs
             free_ips = await self.net_manager.scan_network(start_ip, count)
             
             if not free_ips:
-                # We can't show message box from background thread easily without signals, 
-                # but let's try to just log to status bar for now or use QMetaObject.invokeMethod if needed.
-                # For simplicity, we'll just update status bar via a safe method if possible, 
-                # or rely on the fact that we are in a thread safe loop? No, GUI updates must be on main thread.
-                # We should emit a signal. But for now let's just print.
-                print("No free IPs found in range.")
+                msg = "No free IPs found in range."
                 return
 
             # 2. Claim IPs (Add alias)
@@ -173,25 +186,25 @@ class MainWindow(QMainWindow):
             
             added_ips = []
             for ip in free_ips:
-                success, msg = self.net_manager.add_virtual_ip(iface_data['name'], ip, mask)
+                success, err_msg = self.net_manager.add_virtual_ip(iface_data['name'], ip, mask)
                 if success:
                     added_ips.append(ip)
                     # Add to Server Manager
-                    self.manager.add_server(ip, 5020)
+                    self.manager.add_server(ip, port)
                 else:
-                    print(f"Failed to claim {ip}: {msg}")
+                    print(f"Failed to claim {ip}: {err_msg}")
             
-            # 3. Refresh GUI (Must be done on main thread)
-            # We can use QTimer.singleShot(0, ...) to run on main thread
-            # or just assume the user will see the table update eventually?
-            # The table update is driven by timer, but we need to refresh the list.
-            # Let's trigger a refresh.
+            msg = f"Added {len(added_ips)} servers."
             
         except Exception as e:
-            print(f"Scan error: {e}")
+            msg = f"Scan error: {e}"
         finally:
-            # Re-enable button (needs main thread)
-            pass
+            self.scan_finished.emit(msg)
+
+    def on_scan_finished(self, msg):
+        self.btn_scan.setEnabled(True)
+        self.status_bar.showMessage(msg)
+        self.refresh_table()
 
     def refresh_table(self):
         self.table.setRowCount(len(self.manager.servers))
