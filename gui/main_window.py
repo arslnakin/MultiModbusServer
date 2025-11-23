@@ -1,0 +1,167 @@
+import asyncio
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                             QPushButton, QTableWidget, QTableWidgetItem, 
+                             QHeaderView, QLabel, QStatusBar, QLineEdit, QMessageBox)
+from PyQt6.QtCore import QTimer, pyqtSignal, QObject, QThread
+from PyQt6.QtGui import QColor, QPalette
+
+class AsyncWorker(QObject):
+    finished = pyqtSignal()
+    
+    def __init__(self, loop):
+        super().__init__()
+        self.loop = loop
+
+    def run_coroutine(self, coro):
+        asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+class MainWindow(QMainWindow):
+    def __init__(self, manager, loop):
+        super().__init__()
+        self.manager = manager
+        self.loop = loop
+        self.setWindowTitle("Multi-IP Modbus Server Manager")
+        self.resize(900, 600)
+        
+        self._setup_ui()
+        self._setup_timer()
+
+    def _setup_ui(self):
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
+        
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Modbus Server Control Panel")
+        title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+        
+        # Add Server Controls
+        add_layout = QHBoxLayout()
+        self.input_ip = QLineEdit()
+        self.input_ip.setPlaceholderText("IP Address (e.g., 127.0.0.1)")
+        self.input_ip.setText("127.0.0.1")
+        
+        self.input_port = QLineEdit()
+        self.input_port.setPlaceholderText("Port")
+        self.input_port.setText("5020")
+        self.input_port.setFixedWidth(100)
+        
+        self.btn_add = QPushButton("Add Server")
+        self.btn_add.clicked.connect(self.add_server)
+        
+        add_layout.addWidget(QLabel("New Server:"))
+        add_layout.addWidget(self.input_ip)
+        add_layout.addWidget(self.input_port)
+        add_layout.addWidget(self.btn_add)
+        layout.addLayout(add_layout)
+        
+        # Global Controls
+        control_layout = QHBoxLayout()
+        self.btn_start_all = QPushButton("Start All")
+        self.btn_start_all.clicked.connect(self.start_all_servers)
+        self.btn_stop_all = QPushButton("Stop All")
+        self.btn_stop_all.clicked.connect(self.stop_all_servers)
+        self.btn_remove = QPushButton("Remove Selected")
+        self.btn_remove.clicked.connect(self.remove_selected_server)
+        
+        control_layout.addWidget(self.btn_start_all)
+        control_layout.addWidget(self.btn_stop_all)
+        control_layout.addStretch()
+        control_layout.addWidget(self.btn_remove)
+        layout.addLayout(control_layout)
+        
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["ID", "IP Address", "Port", "Status"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table)
+        
+        self.refresh_table()
+        
+        # Status Bar
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("Ready")
+
+    def refresh_table(self):
+        self.table.setRowCount(len(self.manager.servers))
+        for i, server in enumerate(self.manager.servers):
+            self.table.setItem(i, 0, QTableWidgetItem(str(i+1)))
+            self.table.setItem(i, 1, QTableWidgetItem(server.ip))
+            self.table.setItem(i, 2, QTableWidgetItem(str(server.port)))
+            
+            status_text = "Running" if server.server else "Stopped"
+            status_item = QTableWidgetItem(status_text)
+            if server.server:
+                status_item.setBackground(QColor("#ccffcc"))
+            else:
+                status_item.setBackground(QColor("#ffcccc"))
+            self.table.setItem(i, 3, status_item)
+
+    def _setup_timer(self):
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_status)
+        self.timer.start(1000)  # Update every second
+
+    def update_status(self):
+        # Only update status column to avoid flickering whole table
+        if self.table.rowCount() != len(self.manager.servers):
+            self.refresh_table()
+            return
+
+        for i in range(len(self.manager.servers)):
+            status = self.manager.get_server_status(i)
+            item = self.table.item(i, 3)
+            if status["running"]:
+                item.setText("Running")
+                item.setBackground(QColor("#ccffcc"))
+            else:
+                item.setText("Stopped")
+                item.setBackground(QColor("#ffcccc"))
+
+    def add_server(self):
+        ip = self.input_ip.text()
+        port_str = self.input_port.text()
+        
+        try:
+            port = int(port_str)
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Input", "Port must be a number.")
+            return
+            
+        if self.manager.add_server(ip, port):
+            self.refresh_table()
+            self.status_bar.showMessage(f"Added server {ip}:{port}")
+        else:
+            QMessageBox.warning(self, "Error", "Server already exists.")
+
+    def remove_selected_server(self):
+        row = self.table.currentRow()
+        if row >= 0:
+            ip = self.table.item(row, 1).text()
+            port = self.table.item(row, 2).text()
+            
+            # We need to remove async, but for UI responsiveness we might just fire and forget
+            # or block slightly. Since we have the loop, let's use it.
+            asyncio.run_coroutine_threadsafe(self.manager.remove_server(row), self.loop)
+            
+            # We can't immediately refresh table because removal is async.
+            # But our timer will catch it or we can delay refresh.
+            # For better UX, let's assume success or wait a bit.
+            # Ideally we would have a signal from manager.
+            self.status_bar.showMessage(f"Removing server {ip}:{port}...")
+        else:
+            QMessageBox.warning(self, "Selection", "Please select a server to remove.")
+
+    def start_all_servers(self):
+        self.status_bar.showMessage("Starting all servers...")
+        asyncio.run_coroutine_threadsafe(self.manager.start_all(), self.loop)
+
+    def stop_all_servers(self):
+        self.status_bar.showMessage("Stopping all servers...")
+        asyncio.run_coroutine_threadsafe(self.manager.stop_all(), self.loop)
