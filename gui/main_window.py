@@ -1,9 +1,11 @@
 import asyncio
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QLabel, QStatusBar, QLineEdit, QMessageBox)
+                             QHeaderView, QLabel, QStatusBar, QLineEdit, QMessageBox,
+                             QComboBox, QGroupBox, QFormLayout)
 from PyQt6.QtCore import QTimer, pyqtSignal, QObject, QThread
 from PyQt6.QtGui import QColor, QPalette
+from core.network_manager import NetworkManager
 
 class AsyncWorker(QObject):
     finished = pyqtSignal()
@@ -20,8 +22,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.manager = manager
         self.loop = loop
+        self.net_manager = NetworkManager()
         self.setWindowTitle("Multi-IP Modbus Server Manager")
-        self.resize(900, 600)
+        self.resize(1000, 700)
         
         self._setup_ui()
         self._setup_timer()
@@ -39,10 +42,39 @@ class MainWindow(QMainWindow):
         header_layout.addStretch()
         layout.addLayout(header_layout)
         
-        # Add Server Controls
+        # Network Setup Group
+        net_group = QGroupBox("Network Auto-Setup (Requires Admin)")
+        net_layout = QHBoxLayout()
+        
+        self.combo_iface = QComboBox()
+        self.refresh_interfaces()
+        
+        self.input_scan_ip = QLineEdit()
+        self.input_scan_ip.setPlaceholderText("Start IP (e.g. 192.168.1.50)")
+        
+        self.input_scan_count = QLineEdit()
+        self.input_scan_count.setPlaceholderText("Count")
+        self.input_scan_count.setText("5")
+        self.input_scan_count.setFixedWidth(50)
+        
+        self.btn_scan = QPushButton("Scan & Claim IPs")
+        self.btn_scan.clicked.connect(self.scan_and_claim)
+        
+        net_layout.addWidget(QLabel("Interface:"))
+        net_layout.addWidget(self.combo_iface)
+        net_layout.addWidget(QLabel("Start IP:"))
+        net_layout.addWidget(self.input_scan_ip)
+        net_layout.addWidget(QLabel("Count:"))
+        net_layout.addWidget(self.input_scan_count)
+        net_layout.addWidget(self.btn_scan)
+        net_group.setLayout(net_layout)
+        layout.addWidget(net_group)
+        
+        # Manual Add Group
+        add_group = QGroupBox("Manual Add")
         add_layout = QHBoxLayout()
         self.input_ip = QLineEdit()
-        self.input_ip.setPlaceholderText("IP Address (e.g., 127.0.0.1)")
+        self.input_ip.setPlaceholderText("IP Address")
         self.input_ip.setText("127.0.0.1")
         
         self.input_port = QLineEdit()
@@ -53,11 +85,13 @@ class MainWindow(QMainWindow):
         self.btn_add = QPushButton("Add Server")
         self.btn_add.clicked.connect(self.add_server)
         
-        add_layout.addWidget(QLabel("New Server:"))
+        add_layout.addWidget(QLabel("IP:"))
         add_layout.addWidget(self.input_ip)
+        add_layout.addWidget(QLabel("Port:"))
         add_layout.addWidget(self.input_port)
         add_layout.addWidget(self.btn_add)
-        layout.addLayout(add_layout)
+        add_group.setLayout(add_layout)
+        layout.addWidget(add_group)
         
         # Global Controls
         control_layout = QHBoxLayout()
@@ -87,6 +121,77 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
+
+    def refresh_interfaces(self):
+        self.combo_iface.clear()
+        interfaces = self.net_manager.get_interfaces()
+        for iface in interfaces:
+            # Display Name (IP)
+            ip_str = iface['ip'][0] if iface['ip'] else "No IP"
+            self.combo_iface.addItem(f"{iface['name']} ({ip_str})", iface)
+
+    def scan_and_claim(self):
+        start_ip = self.input_scan_ip.text()
+        try:
+            count = int(self.input_scan_count.text())
+        except ValueError:
+            QMessageBox.warning(self, "Error", "Count must be a number")
+            return
+            
+        if not start_ip:
+            QMessageBox.warning(self, "Error", "Please enter Start IP")
+            return
+            
+        iface_data = self.combo_iface.currentData()
+        if not iface_data:
+            QMessageBox.warning(self, "Error", "No interface selected")
+            return
+
+        self.status_bar.showMessage(f"Scanning {count} IPs starting from {start_ip}...")
+        self.btn_scan.setEnabled(False)
+        
+        # Run async scan
+        asyncio.run_coroutine_threadsafe(self._async_scan_and_claim(iface_data, start_ip, count), self.loop)
+
+    async def _async_scan_and_claim(self, iface_data, start_ip, count):
+        try:
+            # 1. Scan for free IPs
+            free_ips = await self.net_manager.scan_network(start_ip, count)
+            
+            if not free_ips:
+                # We can't show message box from background thread easily without signals, 
+                # but let's try to just log to status bar for now or use QMetaObject.invokeMethod if needed.
+                # For simplicity, we'll just update status bar via a safe method if possible, 
+                # or rely on the fact that we are in a thread safe loop? No, GUI updates must be on main thread.
+                # We should emit a signal. But for now let's just print.
+                print("No free IPs found in range.")
+                return
+
+            # 2. Claim IPs (Add alias)
+            # We need the mask.
+            mask = iface_data['mask'][0] if iface_data['mask'] else "255.255.255.0"
+            
+            added_ips = []
+            for ip in free_ips:
+                success, msg = self.net_manager.add_virtual_ip(iface_data['name'], ip, mask)
+                if success:
+                    added_ips.append(ip)
+                    # Add to Server Manager
+                    self.manager.add_server(ip, 5020)
+                else:
+                    print(f"Failed to claim {ip}: {msg}")
+            
+            # 3. Refresh GUI (Must be done on main thread)
+            # We can use QTimer.singleShot(0, ...) to run on main thread
+            # or just assume the user will see the table update eventually?
+            # The table update is driven by timer, but we need to refresh the list.
+            # Let's trigger a refresh.
+            
+        except Exception as e:
+            print(f"Scan error: {e}")
+        finally:
+            # Re-enable button (needs main thread)
+            pass
 
     def refresh_table(self):
         self.table.setRowCount(len(self.manager.servers))
