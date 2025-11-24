@@ -1,6 +1,8 @@
 # Multi-Modbus Server Simülasyonu
 
 Bu proje, Python ve PyQt6 kullanılarak geliştirilmiş, aynı anda birden fazla Modbus TCP sunucusunu (Slave cihaz) simüle etmenizi sağlayan bir araçtır. Endüstriyel otomasyon testleri, SCADA sistemleri ve PLC haberleşme denemeleri için tasarlanmıştır.
+<img width="988" height="730" alt="image" src="https://github.com/user-attachments/assets/41c14266-d010-476f-9503-980a19557d91" />
+
 
 ## Özellikler
 
