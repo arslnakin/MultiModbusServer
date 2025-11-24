@@ -19,36 +19,8 @@ Bu proje, Python ve PyQt6 kullanılarak geliştirilmiş, aynı anda birden fazla
 
 Proje, **MVC (Model-View-Controller)** mimarisi ve **Asyncio** tabanlı asenkron yapı üzerine kurulmuştur.
 
-```mermaid
-graph TB
-    subgraph External["🌐 Dış Bileşenler"]
-        User["👤 Kullanıcı"]
-        PLC["🏭 PLC/Modbus İstemci"]
-    end
-    
-    subgraph Layer1["📱 Sunum Katmanı - PyQt6"]
-        MainWindow["MainWindow<br/>━━━━━━━━━━<br/>• Server Management Tab<br/>• Data Simulation Tab"]
-        AsyncWorker["AsyncWorker<br/>━━━━━━━━━━<br/>Qt-Asyncio Köprüsü"]
-    end
-    
-    subgraph Layer2["⚙️ İş Mantığı Katmanı"]
-        ServerManager["ServerManager<br/>━━━━━━━━━━<br/>• Sunucu Yönetimi<br/>• Simülasyon Kuralları"]
-        NetworkManager["NetworkManager<br/>━━━━━━━━━━<br/>• Ağ Tarama<br/>• IP Yönetimi"]
-    end
-    
-    subgraph Layer3["💾 Servis/Veri Katmanı"]
-        VirtualModbusServer["VirtualModbusServer<br/>━━━━━━━━━━<br/>• Modbus TCP Sunucu<br/>• Register Simülasyonu"]
-        ModbusDataStore["ModbusDataStore<br/>━━━━━━━━━━<br/>• DI, CO, HR, IR Registers"]
-    end
-    
-    User --> MainWindow
-    MainWindow --> NetworkManager
-    MainWindow --> ServerManager
-    MainWindow -.-> AsyncWorker
-    ServerManager --> VirtualModbusServer
-    VirtualModbusServer --> ModbusDataStore
-    PLC <--> VirtualModbusServer
-```
+<img width="1024" height="559" alt="image" src="https://github.com/user-attachments/assets/743b1861-1004-4de5-a9b0-705c2fde5b1b" />
+
 
 ## Kurulum
 
