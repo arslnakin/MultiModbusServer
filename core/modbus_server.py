@@ -18,6 +18,9 @@ class VirtualModbusServer:
         self.context = None
         self.server = None
         self.server_task = None
+        self.simulation_task = None
+        # Rules: { address: { 'type': 'toggle'|'counter', 'interval': float, 'last_update': float, 'params': {} } }
+        self.simulation_rules = {}
         self._setup_context()
 
     def _setup_context(self):
@@ -66,29 +69,68 @@ class VirtualModbusServer:
             self.server_task = None
 
     def start_simulation(self):
-        self.simulation_task = asyncio.create_task(self._simulation_loop())
+        if not self.simulation_task:
+            self.simulation_task = asyncio.create_task(self._simulation_loop())
 
     def stop_simulation(self):
-        if hasattr(self, 'simulation_task') and self.simulation_task:
+        if self.simulation_task:
             self.simulation_task.cancel()
+            self.simulation_task = None
+
+    def update_simulation_rule(self, address, rule_type, interval, params=None):
+        """
+        Update or add a simulation rule for a specific register address.
+        rule_type: 'none', 'toggle', 'counter'
+        interval: seconds (float)
+        params: dict of extra parameters (e.g. min/max for counter)
+        """
+        if rule_type == 'none':
+            if address in self.simulation_rules:
+                del self.simulation_rules[address]
+        else:
+            self.simulation_rules[address] = {
+                'type': rule_type,
+                'interval': max(0.1, interval), # Minimum 100ms
+                'last_update': 0,
+                'params': params or {}
+            }
 
     async def _simulation_loop(self):
         try:
             while True:
-                # Toggle Register 1 (Address 1)
-                # Note: pymodbus datastore is usually 0-indexed internally but accessed via address.
-                # If we want register 1, we write to address 1.
-                # Let's read current value first or just toggle.
-                
-                # Accessing slave 1, holding registers (3), address 1
+                current_time = asyncio.get_event_loop().time()
                 slave_id = 1
-                address = 1
-                values = self.context[slave_id].getValues(3, address, count=1)
-                new_value = 1 if values[0] == 0 else 0
-                self.context[slave_id].setValues(3, address, [new_value])
                 
-                logging.debug(f"Server {self.ip} updated reg {address} to {new_value}")
-                await asyncio.sleep(5)
+                # Iterate over a copy of keys to avoid runtime errors if dict changes
+                for address, rule in list(self.simulation_rules.items()):
+                    if current_time - rule['last_update'] >= rule['interval']:
+                        try:
+                            # Read current value
+                            # Note: getValues(function_code, address, count)
+                            # 3 = Holding Register
+                            values = self.context[slave_id].getValues(3, address, count=1)
+                            current_val = values[0]
+                            new_val = current_val
+
+                            if rule['type'] == 'toggle':
+                                new_val = 1 if current_val == 0 else 0
+                            
+                            elif rule['type'] == 'counter':
+                                new_val = current_val + 1
+                                # Optional: Reset if overflow (Modbus registers are 16-bit usually)
+                                if new_val > 65535:
+                                    new_val = 0
+                            
+                            self.context[slave_id].setValues(3, address, [new_val])
+                            rule['last_update'] = current_time
+                            # logging.debug(f"Server {self.ip} updated reg {address} to {new_val}")
+                            
+                        except Exception as e:
+                            logging.error(f"Error updating rule for {address}: {e}")
+
+                # Check frequently enough to satisfy the fastest interval
+                await asyncio.sleep(0.1)
+                
         except asyncio.CancelledError:
             pass
         except Exception as e:

@@ -51,3 +51,9 @@ class ServerManager:
                 "running": server.server is not None
             }
         return None
+
+    def set_simulation_rule(self, index, address, rule_type, interval, params=None):
+        if 0 <= index < len(self.servers):
+            self.servers[index].update_simulation_rule(address, rule_type, interval, params)
+            return True
+        return False
